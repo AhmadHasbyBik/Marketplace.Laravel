@@ -5,11 +5,12 @@
 @section('content')
     @php
         use App\Models\Order;
-        $statusOptions = ['pending', 'paid', 'processing', 'shipped', 'completed', 'cancelled'];
+        $statusOptions = ['pending', 'paid', 'processing', 'waiting_materials', 'shipped', 'completed', 'cancelled'];
         $statusColorMap = [
             'pending' => 'bg-amber-100 text-amber-700',
             'paid' => 'bg-emerald-100 text-emerald-700',
             'processing' => 'bg-sky-100 text-sky-600',
+            'waiting_materials' => 'bg-amber-100 text-amber-700',
             'shipped' => 'bg-indigo-100 text-indigo-700',
             'completed' => 'bg-emerald-100 text-emerald-700',
             'cancelled' => 'bg-rose-100 text-rose-700',
@@ -31,7 +32,7 @@
                             <select id="status-filter" name="status" class="rounded-2xl border border-slate-200 bg-white px-3 py-1 text-xs text-slate-600 focus:border-sky-400 focus:outline-none">
                                 <option value="">Semua</option>
                                 @foreach($statusOptions as $statusValue)
-                                    <option value="{{ $statusValue }}" {{ $status === $statusValue ? 'selected' : '' }}>{{ ucfirst($statusValue) }}</option>
+                                    <option value="{{ $statusValue }}" {{ $status === $statusValue ? 'selected' : '' }}>{{ ucfirst(str_replace('_', ' ', $statusValue)) }}</option>
                                 @endforeach
                             </select>
                         </div>
@@ -99,6 +100,9 @@
                                 <span class="inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold {{ $statusColorMap[$order->status] ?? 'bg-slate-100 text-slate-600' }}">
                                     {{ ucfirst($order->status) }}
                                 </span>
+                                @if($order->needs_materials)
+                                    <p class="text-[0.55rem] font-semibold uppercase tracking-[0.3em] text-rose-500 mt-1">Menunggu bahan</p>
+                                @endif
                             </td>
                             <td class="px-4 py-3">
                                 @if($order->payment_proof_path)
@@ -156,7 +160,7 @@
                 <label class="text-xs font-semibold uppercase tracking-[0.3em] text-slate-500">Status</label>
                 <select id="order-status" name="status" required class="mt-1 w-full rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm text-slate-600 focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-100">
                     @foreach($statusOptions as $statusOption)
-                        <option value="{{ $statusOption }}">{{ ucfirst($statusOption) }}</option>
+                        <option value="{{ $statusOption }}">{{ ucfirst(str_replace('_', ' ', $statusOption)) }}</option>
                     @endforeach
                 </select>
             </div>

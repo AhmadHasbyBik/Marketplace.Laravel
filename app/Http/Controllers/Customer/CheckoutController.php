@@ -2,12 +2,14 @@
 
 namespace App\Http\Controllers\Customer;
 
+use App\Http\Controllers\Concerns\HandlesBackorders;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\CheckoutRequest;
 use App\Models\Order;
 use App\Models\OrderItem;
 use App\Models\Product;
 use App\Models\ShippingMethod;
+use App\Services\ProductionPlanner;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -17,6 +19,12 @@ use Illuminate\View\View;
 
 class CheckoutController extends Controller
 {
+    use HandlesBackorders;
+
+    public function __construct(ProductionPlanner $productionPlanner)
+    {
+        $this->productionPlanner = $productionPlanner;
+    }
     public function index(): View|RedirectResponse
     {
         $quickCart = session('checkout.quick_items', []);
@@ -92,16 +100,39 @@ class CheckoutController extends Controller
             'status' => 'pending',
             'is_paid' => false,
             'notes' => $validated['notes'] ?? null,
+            'needs_materials' => false,
         ]);
 
+        $productIds = collect($cart)->pluck('product_id')->filter()->unique()->toArray();
+        $products = Product::with('materials')->whereIn('id', $productIds)->get()->keyBy('id');
+        $needsMaterials = false;
+
         foreach ($cart as $item) {
+            $product = $products->get($item['product_id']);
+            if (! $product) {
+                continue;
+            }
+
+            $analysis = $this->describeBackorder($product, $item['quantity']);
+
             OrderItem::create([
                 'order_id' => $order->id,
-                'product_id' => $item['product_id'],
-                'quantity' => $item['quantity'],
+                'product_id' => $product->id,
+                'quantity' => $analysis['quantity'],
                 'unit_price' => $item['price'],
-                'total' => $item['quantity'] * $item['price'],
+                'total' => $analysis['quantity'] * $item['price'],
+                'meta' => [
+                    'reserved_stock' => $analysis['reserved_stock'],
+                    'backorder_quantity' => $analysis['backorder'],
+                    'requires_materials' => $analysis['requires_materials'],
+                ],
             ]);
+
+            $needsMaterials = $needsMaterials || $analysis['backorder'] > 0;
+        }
+
+        if ($needsMaterials) {
+            $order->update(['needs_materials' => true]);
         }
 
         $order->history()->create([
@@ -126,16 +157,16 @@ class CheckoutController extends Controller
             'quantity' => ['sometimes', 'integer', 'min:1'],
         ]);
 
-        $product = Product::findOrFail($validated['product_id']);
-        if ($product->stock < 1) {
-            return redirect()->back()->with('warning', 'Stok produk tidak tersedia saat ini');
+        $product = Product::with('materials')->findOrFail($validated['product_id']);
+        $quantity = max(1, (int) ($validated['quantity'] ?? 1));
+        $analysis = $this->describeBackorder($product, $quantity);
+
+        if (! $analysis['production_ready']) {
+            return redirect()->back()->with('warning', 'Stok dan bahan baku tidak mencukupi saat ini');
         }
 
-        $quantity = (int) ($validated['quantity'] ?? 1);
-        $quantity = max(1, min($quantity, max($product->stock, 1)));
-
         session()->put('checkout.quick_items', [
-            $product->id => $this->buildQuickCartItem($product, $quantity),
+            $product->id => $this->buildQuickCartItem($product, $analysis),
         ]);
 
         return redirect()->route('front.checkout.index');
@@ -172,16 +203,12 @@ class CheckoutController extends Controller
         return redirect()->route('front.checkout.index');
     }
 
-    private function buildQuickCartItem(Product $product, int $quantity): array
+    private function buildQuickCartItem(Product $product, array $analysis): array
     {
-        return [
-            'product_id' => $product->id,
-            'name' => $product->name,
-            'price' => $product->price,
-            'quantity' => $quantity,
-            'stock' => $product->stock,
-            'weight' => $product->weight ?? null,
-        ];
+        $payload = $this->formatCartPayload($product, $analysis);
+        $payload['weight'] = $product->weight ?? null;
+
+        return $payload;
     }
 
     private function ensureShippingMethodFromOrder(array $validated): ?int

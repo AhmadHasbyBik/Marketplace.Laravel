@@ -4,8 +4,10 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use App\Models\Category;
+use App\Models\Material;
 use App\Models\ProductImage;
 use App\Models\Review;
 use App\Models\OrderItem;
@@ -54,5 +56,10 @@ class Product extends Model
     public function posTransactionItems(): HasMany
     {
         return $this->hasMany(PosTransactionItem::class);
+    }
+
+    public function materials(): BelongsToMany
+    {
+        return $this->belongsToMany(Material::class)->withPivot('quantity')->withTimestamps();
     }
 }

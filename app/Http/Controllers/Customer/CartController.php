@@ -2,8 +2,10 @@
 
 namespace App\Http\Controllers\Customer;
 
+use App\Http\Controllers\Concerns\HandlesBackorders;
 use App\Http\Controllers\Controller;
 use App\Models\Product;
+use App\Services\ProductionPlanner;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\RedirectResponse;
@@ -11,6 +13,13 @@ use Illuminate\View\View;
 
 class CartController extends Controller
 {
+    use HandlesBackorders;
+
+    public function __construct(ProductionPlanner $productionPlanner)
+    {
+        $this->productionPlanner = $productionPlanner;
+    }
+
     protected function getCartItems(): array
     {
         return session('cart.items', []);
@@ -30,15 +39,9 @@ class CartController extends Controller
         session(['cart' => $cart]);
     }
 
-    protected function buildCartItem(Product $product, int $quantity): array
+    protected function buildCartItem(Product $product, array $analysis): array
     {
-        return [
-            'product_id' => $product->id,
-            'name' => $product->name,
-            'price' => $product->price,
-            'quantity' => $quantity,
-            'stock' => $product->stock,
-        ];
+        return $this->formatCartPayload($product, $analysis);
     }
 
     public function index(): View
@@ -56,29 +59,24 @@ class CartController extends Controller
             'quantity' => ['required', 'integer', 'min:1'],
         ]);
 
-        $product = Product::findOrFail($validated['product_id']);
-
-        if ($product->stock < 1) {
-            return redirect()->back()->with('warning', 'Stok produk tidak tersedia saat ini');
-        }
-
+        $product = Product::with('materials')->findOrFail($validated['product_id']);
         $items = $this->getCartItems();
         $existingQuantity = $items[$product->id]['quantity'] ?? 0;
+        $desiredQuantity = $existingQuantity + $validated['quantity'];
+        $analysis = $this->describeBackorder($product, $desiredQuantity);
 
-        if ($existingQuantity >= $product->stock) {
-            return redirect()->route('front.cart.index')->with('warning', 'Stok produk telah habis di keranjang');
+        if (! $analysis['production_ready']) {
+            return redirect()->back()->with('warning', 'Stok dan bahan baku tidak mencukupi saat ini');
         }
 
-        $desiredQuantity = $existingQuantity + $validated['quantity'];
-        $finalQuantity = min($desiredQuantity, $product->stock);
-        $items[$product->id] = $this->buildCartItem($product, $finalQuantity);
+        $items[$product->id] = $this->buildCartItem($product, $analysis);
         $this->saveCartItems($items);
 
         $message = 'Produk ditambahkan ke keranjang';
         $messageType = 'success';
 
-        if ($finalQuantity > $existingQuantity && $finalQuantity < $desiredQuantity) {
-            $message = 'Stok terbatas: jumlah disesuaikan dengan ketersediaan';
+        if ($analysis['backorder'] > 0) {
+            $message = 'Stok terbatas: sisanya akan diproduksi dari bahan baku';
             $messageType = 'warning';
         }
 
@@ -101,22 +99,22 @@ class CartController extends Controller
             return redirect()->back()->with('warning', 'Produk tidak ditemukan di keranjang');
         }
 
-        if ($validated['quantity'] > $product->stock) {
-            $message = 'Tidak dapat memesan lebih dari stok tersedia';
-            $previousQuantity = $items[$product->id]['quantity'];
+        $analysis = $this->describeBackorder($product->loadMissing('materials'), $validated['quantity']);
+        if (! $analysis['production_ready']) {
+            $message = 'Stok dan bahan baku tidak mencukupi untuk kuantitas tersebut';
 
             if ($request->wantsJson()) {
                 return response()->json([
                     'message' => $message,
                     'available_stock' => $product->stock,
-                    'quantity' => $previousQuantity,
+                    'backorder' => $analysis['backorder'],
                 ], 422);
             }
 
             return redirect()->back()->with('warning', $message);
         }
 
-        $items[$product->id] = $this->buildCartItem($product, $validated['quantity']);
+        $items[$product->id] = $this->buildCartItem($product, $analysis);
         $this->saveCartItems($items);
         $subtotal = $this->calculateSubtotal(['items' => $items]);
 
@@ -125,6 +123,8 @@ class CartController extends Controller
                 'quantity' => $items[$product->id]['quantity'],
                 'subtotal' => $subtotal,
                 'available_stock' => $product->stock,
+                'backorder' => $analysis['backorder'],
+                'production_ready' => $analysis['production_ready'],
             ]);
         }
 

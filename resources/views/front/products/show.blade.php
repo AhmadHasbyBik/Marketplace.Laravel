@@ -35,6 +35,9 @@
             <div class="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
                 <div class="text-2xl font-semibold text-rose-600">Rp{{ number_format($product->price, 0, ',', '.') }}</div>
                 <p class="text-sm text-slate-500">Stok tersedia: {{ $product->stock }}</p>
+                @if($product->stock <= 0 && ($product->backorder_available ?? false))
+                    <p class="text-xs text-rose-500 mt-1">Stok habis, pesanan akan dibuat dari bahan baku yang tersedia.</p>
+                @endif
                 <form action="{{ route('front.cart.store') }}" method="POST" class="mt-4 space-y-3">
                     @csrf
                     <input type="hidden" name="product_id" value="{{ $product->id }}">

@@ -67,6 +67,22 @@
                     'activePattern' => 'admin.inventory.*',
                 ],
                 [
+                    'label' => 'Bahan Baku',
+                    'route' => 'admin.materials.index',
+                    'description' => 'Kelola stok & resep bahan',
+                    'icon' => '<path d="M5 4h14v4H5z" /><path d="M5 10h14v4H5z" /><path d="M5 16h14v4H5z" />',
+                    'color' => 'from-lime-400/80 to-emerald-500/80',
+                    'activePattern' => 'admin.materials.*',
+                ],
+                [
+                    'label' => 'Pembelian Bahan',
+                    'route' => 'admin.material-purchases.index',
+                    'description' => 'Catat purchase order bahan baku',
+                    'icon' => '<path d="M16 10a4 4 0 0 1-8 0" /><path d="M3.103 6.034h17.794" /><path d="M3.4 5.467a2 2 0 0 0-.4 1.2V20a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6.667a2 2 0 0 0-.4-1.2l-2-2.667A2 2 0 0 0 17 2H7a2 2 0 0 0-1.6.8z" />',
+                    'color' => 'from-fuchsia-500/80 to-purple-500/70',
+                    'activePattern' => 'admin.material-purchases.*',
+                ],
+                [
                     'label' => 'Supplier',
                     'route' => 'admin.suppliers.index',
                     'description' => 'Kelola mitra dagang',

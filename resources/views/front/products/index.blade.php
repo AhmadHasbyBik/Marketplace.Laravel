@@ -49,6 +49,9 @@
                             <span class="text-slate-500">Kategori: {{ $product->category?->name ?? 'Umum' }}</span>
                             <span class="text-rose-600 font-semibold">Rp{{ number_format($product->price, 0, ',', '.') }}</span>
                         </div>
+                        @if($product->stock <= 0 && ($product->backorder_available ?? false))
+                            <p class="text-xs font-semibold text-rose-500">Stok habis, bisa dibuat dari bahan baku.</p>
+                        @endif
                         <a href="{{ route('front.products.show', $product) }}" class="flex items-center gap-2 text-sm font-semibold text-rose-500">
                             <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 9l3 3-3 3M6 12h12"/>

@@ -12,7 +12,13 @@
         @else
             <div class="rounded-3xl border border-slate-200 bg-white p-6 shadow-xl space-y-4">
                 @foreach($cart['items'] as $item)
-                    <div class="flex flex-wrap items-center justify-between gap-4 border-b border-slate-100 pb-4 last:border-b-0" data-cart-item data-product-id="{{ $item['product_id'] }}">
+                    <div
+                        class="flex flex-wrap items-center justify-between gap-4 border-b border-slate-100 pb-4 last:border-b-0"
+                        data-cart-item
+                        data-product-id="{{ $item['product_id'] }}"
+                        data-backorder="{{ $item['backorder'] ?? 0 }}"
+                        data-production-ready="{{ ($item['production_ready'] ?? false) ? '1' : '0' }}"
+                    >
                         <div class="flex flex-col gap-2">
                             <div class="font-semibold">{{ $item['name'] }}</div>
                             <div class="flex items-center gap-1 text-sm text-slate-500">
@@ -35,10 +41,12 @@
                                     min="1"
                                     step="1"
                                     value="{{ $item['quantity'] }}"
-                                    max="{{ max($item['stock'] ?? 1, 1) }}"
                                     aria-label="Kuantitas {{ $item['name'] }}"
                                     data-quantity-input
                                     data-stock="{{ $item['stock'] ?? 0 }}"
+                                    @if(($item['backorder'] ?? 0) === 0)
+                                        max="{{ max($item['stock'] ?? 1, 1) }}"
+                                    @endif
                                     class="w-16 rounded-2xl border border-slate-200 py-1 text-center text-sm font-semibold text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-200"
                                 />
                                 <button type="button" class="quantity-btn flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 text-slate-600 focus:outline-none" data-action="increment">
@@ -48,6 +56,15 @@
                                 </button>
                             </div>
                             <p class="text-xs text-slate-500" data-stock-tip>Stok tersedia: {{ $item['stock'] ?? 0 }}</p>
+                            <p class="text-xs text-rose-500" data-backorder-tip>
+                                @if(($item['backorder'] ?? 0) > 0)
+                                    @if($item['production_ready'] ?? false)
+                                        Stok terbatas: sisanya akan diproduksi dari bahan baku.
+                                    @else
+                                        Bahan baku tidak cukup untuk kuantitas ini.
+                                    @endif
+                                @endif
+                            </p>
                         </div>
                         <form method="POST" action="{{ route('front.cart.destroy', $item['product_id']) }}" class="self-end">
                             @csrf
@@ -192,14 +209,15 @@
                 return payload;
             }
 
-            function updateControlState(container, quantity, availableStock) {
+            function updateControlState(container, quantity, availableStock, payload = null) {
                 const decrementButton = container.querySelector('[data-action="decrement"]');
                 const incrementButton = container.querySelector('[data-action="increment"]');
                 const quantityInput = container.querySelector('[data-quantity-input]');
                 const stockTip = container.querySelector('[data-stock-tip]');
                 const parsedStock = Number(availableStock ?? quantityInput?.dataset.stock ?? 0);
                 const normalizedStock = Number.isFinite(parsedStock) ? Math.max(0, parsedStock) : 0;
-                const disableIncrement = normalizedStock > 0 ? quantity >= normalizedStock : true;
+                const allowBackorder = Boolean(payload?.production_ready) && Number(payload?.backorder ?? 0) > 0;
+                const disableIncrement = normalizedStock > 0 ? quantity >= normalizedStock : !allowBackorder;
                 const disableDecrement = quantity <= 1;
 
                 const toggleButtonState = (button, disabled) => {
@@ -217,7 +235,11 @@
                 if (quantityInput) {
                     quantityInput.dataset.stock = normalizedStock;
                     quantityInput.dataset.lastSynced = quantity;
-                    quantityInput.setAttribute('max', Math.max(1, normalizedStock));
+                    if (normalizedStock > 0) {
+                        quantityInput.setAttribute('max', Math.max(1, normalizedStock));
+                    } else {
+                        quantityInput.removeAttribute('max');
+                    }
                 }
 
                 if (stockTip) {
@@ -225,9 +247,29 @@
                 }
             }
 
+            function updateBackorderTip(container, payload) {
+                const backorderTip = container.querySelector('[data-backorder-tip]');
+                if (!backorderTip) {
+                    return;
+                }
+                const backorderAmount = Number(payload?.backorder ?? 0);
+                const ready = Boolean(payload?.production_ready);
+                if (backorderAmount > 0) {
+                    backorderTip.textContent = ready
+                        ? 'Stok terbatas: sisanya akan diproduksi dari bahan baku.'
+                        : 'Bahan baku tidak cukup untuk kuantitas ini.';
+                } else {
+                    backorderTip.textContent = '';
+                }
+            }
+
             function initializeQuantityControl(container) {
                 const quantityInput = container.querySelector('[data-quantity-input]');
                 const productId = container.dataset.productId;
+                const initialPayload = {
+                    backorder: Number(container.dataset.backorder ?? 0),
+                    production_ready: container.dataset.productionReady === '1',
+                };
                 if (!quantityInput || !productId) {
                     return;
                 }
@@ -248,12 +290,22 @@
                         const appliedQuantity = Number(payload?.quantity ?? sanitized);
                         const stock = Number(payload?.available_stock ?? quantityInput.dataset.stock ?? 0);
                         quantityInput.value = appliedQuantity;
-                        updateControlState(container, appliedQuantity, stock);
+                        updateControlState(container, appliedQuantity, stock, payload);
+                        updateBackorderTip(container, payload);
+                        container.dataset.backorder = Number(payload?.backorder ?? 0);
+                        container.dataset.productionReady = payload?.production_ready ? '1' : '0';
                     } catch (error) {
                         const fallbackQuantity = Number(error?.quantity ?? currentValue);
                         const fallbackStock = Number(error?.availableStock ?? quantityInput.dataset.stock ?? 0);
                         quantityInput.value = fallbackQuantity;
-                        updateControlState(container, fallbackQuantity, fallbackStock);
+                        const fallbackPayload = {
+                            backorder: Number(error?.backorder ?? 0),
+                            production_ready: Boolean(error?.production_ready),
+                        };
+                        updateControlState(container, fallbackQuantity, fallbackStock, fallbackPayload);
+                        updateBackorderTip(container, fallbackPayload);
+                        container.dataset.backorder = Number(fallbackPayload.backorder ?? 0);
+                        container.dataset.productionReady = fallbackPayload.production_ready ? '1' : '0';
                         console.error(error);
                         if (error instanceof Error && error.message) {
                             alert(error.message);
@@ -281,7 +333,8 @@
                     void handleChange(value);
                 });
 
-                updateControlState(container, Number(quantityInput.value) || 1, Number(quantityInput.dataset.stock ?? 0));
+                updateControlState(container, Number(quantityInput.value) || 1, Number(quantityInput.dataset.stock ?? 0), initialPayload);
+                updateBackorderTip(container, initialPayload);
             }
 
             document.querySelectorAll('[data-cart-item]').forEach(initializeQuantityControl);

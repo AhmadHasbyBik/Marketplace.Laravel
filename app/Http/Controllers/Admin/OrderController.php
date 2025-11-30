@@ -2,16 +2,28 @@
 
 namespace App\Http\Controllers\Admin;
 
+use App\Http\Controllers\Concerns\HandlesBackorders;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\OrderStatusRequest;
 use App\Models\Order;
+use App\Models\Material;
+use App\Models\MaterialMovement;
+use App\Models\Product;
 use App\Models\StockMovement;
+use App\Services\ProductionPlanner;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\View\View;
 
 class OrderController extends Controller
 {
+    use HandlesBackorders;
+
+    public function __construct(ProductionPlanner $productionPlanner)
+    {
+        $this->productionPlanner = $productionPlanner;
+    }
     /**
      * Display a listing of the resource.
      */
@@ -74,25 +86,93 @@ class OrderController extends Controller
         $order->history()->create([
             'status' => $data['status'],
             'notes' => $data['notes'] ?? null,
-            'changed_by' => auth()->id(),
+            'changed_by' => Auth::id(),
         ]);
 
         $order->loadMissing('items.product');
 
+        if ($data['status'] === 'waiting_materials') {
+            $order->needs_materials = true;
+            $order->save();
+        }
+
         if ($data['status'] === 'completed') {
-            $order->items->each(function ($item) use ($order) {
-                $product = $item->product;
-                if ($product) {
-                    $product->decrement('stock', $item->quantity);
-                    StockMovement::create([
-                        'product_id' => $product->id,
-                        'user_id' => auth()->id(),
-                        'type' => 'out',
-                        'quantity' => $item->quantity,
-                        'notes' => "Order #{$order->order_number} selesai",
-                    ]);
+            $insufficient = collect();
+            foreach ($order->items as $item) {
+            /** @var Product|null $product */
+            $product = $item->product;
+                $backorderQty = (int) ($item->meta['backorder_quantity'] ?? 0);
+                if ($backorderQty <= 0 || ! $product) {
+                    continue;
                 }
-            });
+
+                if (! $this->productionPlanner->canProduce($product, $backorderQty)) {
+                    $insufficient->push($product->name ?? 'Produk');
+                }
+            }
+
+            if ($insufficient->isNotEmpty()) {
+                $order->needs_materials = true;
+                $order->save();
+                return redirect()->back()->with('warning', 'Bahan baku tidak mencukupi untuk: ' . $insufficient->unique()->implode(', '));
+            }
+
+            foreach ($order->items as $item) {
+                $product = $item->product;
+                if (! $product) {
+                    continue;
+                }
+
+                $reservedStock = (int) ($item->meta['reserved_stock'] ?? min($item->quantity, $product->stock));
+                if ($reservedStock > 0) {
+                    $decrement = min($reservedStock, max((int) $product->stock, 0));
+                    if ($decrement > 0) {
+                        $product->decrement('stock', $decrement);
+                        StockMovement::create([
+                            'product_id' => $product->id,
+                            'user_id' => Auth::id(),
+                            'type' => 'out',
+                            'quantity' => $decrement,
+                            'notes' => "Order #{$order->order_number} selesai",
+                        ]);
+                    }
+                }
+
+                $backorderQty = (int) ($item->meta['backorder_quantity'] ?? 0);
+                if ($backorderQty > 0) {
+                    $requirements = $this->productionPlanner->requiredMaterials($product, $backorderQty);
+                    foreach ($requirements as $requirement) {
+                        /** @var Material $material */
+                        $material = $requirement['material'];
+                        $needed = $requirement['needed'];
+                        if ($needed <= 0 || $material->stock <= 0) {
+                            continue;
+                        }
+
+                        $consume = min($needed, max((float) $material->stock, 0.0));
+                        if ($consume <= 0) {
+                            continue;
+                        }
+
+                        $material->decrement('stock', $consume);
+                        MaterialMovement::create([
+                            'material_id' => $material->id,
+                            'user_id' => Auth::id(),
+                            'type' => 'out',
+                            'quantity' => $consume,
+                            'notes' => "Produksi order #{$order->order_number}",
+                        ]);
+                    }
+                }
+            }
+
+            $order->needs_materials = false;
+            $order->save();
+        }
+
+        if (in_array($data['status'], ['cancelled'])) {
+            $order->needs_materials = false;
+            $order->save();
         }
 
         return redirect()->route('admin.orders.index')->with('success', 'Status pesanan diperbarui');
