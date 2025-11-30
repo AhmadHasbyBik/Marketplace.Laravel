@@ -1,0 +1,34 @@
+<?php
+
+namespace App\Http\Requests;
+
+use Illuminate\Foundation\Http\FormRequest;
+
+class ShippingMethodRequest extends FormRequest
+{
+    /**
+     * Determine if the user is authorized to make this request.
+     */
+    public function authorize(): bool
+    {
+        return true;
+    }
+
+    /**
+     * Get the validation rules that apply to the request.
+     *
+     * @return array<string, \Illuminate\Contracts\Validation\ValidationRule|array<mixed>|string>
+     */
+    public function rules(): array
+    {
+        return [
+            'name' => ['required', 'string'],
+            'slug' => ['required', 'string'],
+            'type' => ['required', 'in:pickup,courier'],
+            'flat_rate' => ['required', 'numeric', 'min:0'],
+            'zones' => ['nullable', 'array'],
+            'estimation' => ['nullable', 'string'],
+            'is_active' => ['boolean'],
+        ];
+    }
+}
